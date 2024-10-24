@@ -313,7 +313,7 @@ def run(rank, n_gpus, hps):
 
     for epoch in range(epoch_str, hps.train.epochs + 1):
         # 更新总轮数
-        logging.info(epoch / hps.train.epochs)
+        logging.info(f'总进度{epoch / hps.train.epochs * 100} %...')
         update_status("Training started...", epoch / hps.train.epochs * 100, "Training in progress", "", hps.train.epochs,
                       epoch)
 
@@ -468,7 +468,6 @@ def train_and_evaluate(rank, epoch, hps, nets, optims, schedulers, scaler, loade
         now = time.time()
         durtaion = format(now - start_time, '.2f')
         logger.info(f'====> Epoch: {epoch}, cost {durtaion} s')
-        logger.info(f'当前轮数: {process_status["current_epoch"].value}/{process_status["total_epochs"].value}')
         start_time = now
 
 
