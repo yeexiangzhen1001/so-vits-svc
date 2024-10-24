@@ -599,7 +599,7 @@ async def train_model(config_path: str, parameters: TrainingParameters):
 
 # 训练主模型
 # async def train_model(config_path: str):
-#     command = f"python train.py -c {config_path} -m 44k"
+#     command = f"/root/miniconda3/bin/python train.py -c {config_path} -m 44k"
 #     with lock:
 #         process_status["current_task"] = "开始主模型训练..."
 #         logging.info(process_status["current_task"])
@@ -633,7 +633,7 @@ async def train_model(config_path: str, parameters: TrainingParameters):
 
 async def inference_model(model_path: str, config_path: str, audio_name: str, speaker: str):
     """根据训练出来的模型进行推理"""
-    command = f"python inference_main.py -m \"{model_path}\" -c \"{config_path}\" -n \"{audio_name}\" -t 0 -s \"{speaker}\""
+    command = f"/root/miniconda3/bin/python inference_main.py -m \"{model_path}\" -c \"{config_path}\" -n \"{audio_name}\" -t 0 -s \"{speaker}\""
     logging.info(command)
 
     update_status("Running inference...", None, "Running inference...", "", None, None)
@@ -660,7 +660,7 @@ async def inference_model(model_path: str, config_path: str, audio_name: str, sp
 
 # 预处理
 async def pre_processing(output_dir: str, input_dir: str, work_dir: str, parameters: TrainingParameters):
-    command = f"python ./audio-slicer.py --output {output_dir} --input {input_dir} 10"
+    command = f"/root/miniconda3/bin/python ./audio-slicer.py --output {output_dir} --input {input_dir} 10"
     update_status("Running audio slicer...", 0, "Running audio slicer...", "", 0, 0)
     logging.info("Running audio slicer...")
 
@@ -708,7 +708,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
         logging.info("Files moved to speaker directory and config.json created!")
 
         # 执行重采样
-        resample_command = "python resample.py --skip_loudnorm"
+        resample_command = "/root/miniconda3/bin/python resample.py --skip_loudnorm"
         update_status("Resampling audio files to 44100Hz mono...", 0, "Resampling audio files to 44100Hz mono...", "",
                       0, 0)
         logging.info("Resampling audio files to 44100Hz mono...")
@@ -730,7 +730,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
             logging.error(f"Error running resampling: {str(e)}")
 
         # 自动划分训练集和验证集，并生成配置文件
-        preprocess_command = "python preprocess_flist_config.py --speech_encoder vec768l12"
+        preprocess_command = "/root/miniconda3/bin/python preprocess_flist_config.py --speech_encoder vec768l12"
         update_status("Splitting dataset and generating configuration...", 0,
                       "Splitting dataset and generating configuration...", "", 0, 0)
         logging.info("Splitting dataset and generating configuration...")
@@ -757,7 +757,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
         update_config_file(parameters, config_path)
 
         # 生成 Hubert 与 F0
-        hubert_f0_command = "python preprocess_hubert_f0.py --f0_predictor rmvpe --num_processes 8"
+        hubert_f0_command = "/root/miniconda3/bin/python preprocess_hubert_f0.py --f0_predictor rmvpe --num_processes 8"
         update_status("Generating Hubert and F0...", 0, "Generating Hubert and F0...", "", 0, 0)
         logging.info("Generating Hubert and F0...")
 
