@@ -936,10 +936,11 @@ async def get_status():
         "current_task": "No task running",
         "progress": 0,
         "message": "No message",
-        "error": "",
+        "error": None,
         "total_epochs": 0,
         "current_epoch": 0,
         "is_training": 0,
+        "code": 200
     }
 
     if status:
