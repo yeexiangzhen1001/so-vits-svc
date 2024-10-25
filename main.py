@@ -931,6 +931,7 @@ async def get_status():
     status = get_latest_status()
 
     # 设置默认值
+    code = 200
     default_status = {
         "current_task": "No task running",
         "progress": 0,
@@ -939,12 +940,13 @@ async def get_status():
         "total_epochs": 0,
         "current_epoch": 0,
         "is_training": 0,
-        "code": 200,
     }
 
     if status:
         # 解包状态记录，如果存在的话
         current_task, progress, message, error, total_epochs, current_epoch, is_training = status[1:]
+        if error is not None:
+            code = 400
         return {
             "current_task": current_task,
             "progress": progress,
@@ -953,7 +955,7 @@ async def get_status():
             "total_epochs": total_epochs,
             "current_epoch": current_epoch,
             "is_training": is_training,
-            "code": 200,
+            "code": code,
         }
     else:
         # 返回默认状态
