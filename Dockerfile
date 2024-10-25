@@ -1,6 +1,9 @@
 # 基于现有镜像
 FROM registry.cn-beijing.aliyuncs.com/codewithgpu/svc-develop-team-so-vits-svc:hz91jlgLNj
 
+# 设置环境变量
+ENV PYTORCH_CUDA_ALLOC_CONF="expandable_segments:True"
+
 # 复制本地文件到容器中的指定目录
 COPY ./main.py /root/workdir/so-vits-svc/
 COPY ./inference_main.py /root/workdir/so-vits-svc/
