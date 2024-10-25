@@ -938,7 +938,8 @@ async def get_status():
         "error": "",
         "total_epochs": 0,
         "current_epoch": 0,
-        "is_training": 0
+        "is_training": 0,
+        "code": 200,
     }
 
     if status:
@@ -951,7 +952,8 @@ async def get_status():
             "error": error,
             "total_epochs": total_epochs,
             "current_epoch": current_epoch,
-            "is_training": is_training
+            "is_training": is_training,
+            "code": 200,
         }
     else:
         # 返回默认状态
