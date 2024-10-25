@@ -773,6 +773,8 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
             model_path = os.path.join(model_directory, model_file)
             for audio_file in audio_files:
                 await inference_model(model_path, config_path, audio_file, speaker)
+
+            for audio_file in audio_files:
                 os.remove(os.path.join(audio_directory, audio_file))
                 logging.info(f"Deleted audio file: {audio_file}")
 
