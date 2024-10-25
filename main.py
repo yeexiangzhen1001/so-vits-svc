@@ -924,14 +924,12 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
     return {"code": 200, "message": "Training started, files are being downloaded and processed."}
 
 
-# 获取流程状态
 @app.get("/status")
 async def get_status():
     # 获取最新状态
     status = get_latest_status()
 
-    # 设置默认值
-    code = 200
+    # 设置默认状态
     default_status = {
         "current_task": "No task running",
         "progress": 0,
@@ -946,8 +944,8 @@ async def get_status():
     if status:
         # 解包状态记录，如果存在的话
         current_task, progress, message, error, total_epochs, current_epoch, is_training = status[1:]
-        if error is not None:
-            code = 400
+        # 如果 error 不为空，返回 code 400
+        code = 400 if error is not None else 200
         return {
             "current_task": current_task,
             "progress": progress,
@@ -956,7 +954,7 @@ async def get_status():
             "total_epochs": total_epochs,
             "current_epoch": current_epoch,
             "is_training": is_training,
-            "code": code,
+            "code": code
         }
     else:
         # 返回默认状态
