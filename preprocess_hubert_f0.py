@@ -29,6 +29,7 @@ speech_encoder = hps["model"]["speech_encoder"]
 
 
 def process_one(filename, hmodel, f0p, device, diff=False, mel_extractor=None):
+    logging.info(filename)
     wav, sr = librosa.load(filename, sr=sampling_rate)
     audio_norm = torch.FloatTensor(wav)
     audio_norm = audio_norm.unsqueeze(0)

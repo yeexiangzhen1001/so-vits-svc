@@ -92,7 +92,8 @@ def init_db():
         message TEXT,
         error TEXT,
         total_epochs INTEGER,
-        current_epoch INTEGER
+        current_epoch INTEGER,
+        is_training INTEGER DEFAULT 0
     )
     ''')
     conn.commit()
@@ -103,7 +104,8 @@ init_db()
 
 
 # 插入或更新训练状态
-def update_status(current_task=None, progress=None, message=None, error=None, total_epochs=None, current_epoch=None):
+def update_status(current_task=None, progress=None, message=None, error=None, total_epochs=None, current_epoch=None,
+                  is_training=None):
     conn = sqlite3.connect('process_status.db')
     cursor = conn.cursor()
 
@@ -113,7 +115,7 @@ def update_status(current_task=None, progress=None, message=None, error=None, to
 
     # 如果数据库中没有状态记录，初始化一个默认值
     if not last_status:
-        last_status = (None, "", 0, "", "", 0, 0)
+        last_status = (None, "", 0, "", "", 0, 0, 0)
 
     # 更新新状态，保留未提供参数的字段的旧值
     new_status = (
@@ -123,12 +125,13 @@ def update_status(current_task=None, progress=None, message=None, error=None, to
         error if error is not None else last_status[4],
         total_epochs if total_epochs is not None else last_status[5],
         current_epoch if current_epoch is not None else last_status[6],
+        is_training if is_training is not None else last_status[7],  # 更新is_training字段
     )
 
     # 插入新状态
     cursor.execute('''
-    INSERT INTO process_status (current_task, progress, message, error, total_epochs, current_epoch)
-    VALUES (?, ?, ?, ?, ?, ?)
+    INSERT INTO process_status (current_task, progress, message, error, total_epochs, current_epoch, is_training)
+    VALUES (?, ?, ?, ?, ?, ?, ?)
     ''', new_status)
     conn.commit()
     conn.close()
@@ -142,6 +145,19 @@ def get_latest_status():
     row = cursor.fetchone()
     conn.close()
     return row
+
+
+# 检查是否已有正在进行的训练
+def is_training_in_progress():
+    conn = sqlite3.connect('process_status.db')
+    cursor = conn.cursor()
+    # 查询最新状态的 is_training 字段
+    cursor.execute('SELECT is_training FROM process_status ORDER BY id DESC LIMIT 1')
+    last_status = cursor.fetchone()
+    conn.close()
+
+    # 如果 is_training 为 1，则说明训练正在进行
+    return last_status and last_status[0] == 1
 
 
 # 更新数据库中的当前轮数
@@ -314,8 +330,9 @@ def run(rank, n_gpus, hps):
     for epoch in range(epoch_str, hps.train.epochs + 1):
         # 更新总轮数
         logging.info(f'总进度{epoch / hps.train.epochs * 100} %...')
-        update_status("Training started...", epoch / hps.train.epochs * 100, "Training in progress", "", hps.train.epochs,
-                      epoch)
+        update_status("Training started...", epoch / hps.train.epochs * 100, "Training in progress", "",
+                      hps.train.epochs,
+                      epoch, None)
 
         # set up warm-up learning rate
         if epoch <= warmup_epoch:
@@ -580,54 +597,41 @@ async def read_output(stream, log_func):
 
 async def train_model(config_path: str, parameters: TrainingParameters):
     """训练主模型"""
-    assert torch.cuda.is_available(), "CPU training is not allowed."
+    try:
+        # 检查 GPU 是否可用
+        assert torch.cuda.is_available(), "CPU training is not allowed."
 
-    # 获取超参数
-    hps = get_hparams(config_path="./configs/config.json", model_name="44k")
+        # 获取超参数
+        hps = get_hparams(config_path="./configs/config.json", model_name="44k")
 
-    n_gpus = torch.cuda.device_count()
-    os.environ['MASTER_ADDR'] = 'localhost'
-    os.environ['MASTER_PORT'] = hps.train.port
+        # 设置分布式训练的地址和端口
+        n_gpus = torch.cuda.device_count()
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = hps.train.port
 
-    update_status("开始主模型训练...", 0, "开始主模型训练...", "", 0, 0)
-    logging.info("开始主模型训练...")
+        update_status("开始主模型训练...", 0, "开始主模型训练...", "", 0, 0, 1)
+        logging.info("开始主模型训练...")
 
-    loop = asyncio.get_event_loop()
-    await loop.run_in_executor(executor, lambda: mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps)))
+        # 使用异步事件循环运行多进程训练
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(executor, lambda: mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps)))
 
+        # 训练成功后更新状态
+        update_status("训练完成!", 100, "训练完成!", "", parameters.epochs, parameters.epochs, 0)
+        logging.info("训练完成!")
 
-# 训练主模型
-# async def train_model(config_path: str):
-#     command = f"/root/miniconda3/bin/python train.py -c {config_path} -m 44k"
-#     with lock:
-#         process_status["current_task"] = "开始主模型训练..."
-#         logging.info(process_status["current_task"])
-#
-#     process = await asyncio.create_subprocess_shell(
-#         command,
-#         stdout=asyncio.subprocess.PIPE,
-#         stderr=asyncio.subprocess.PIPE,
-#         cwd="/root/workdir/so-vits-svc"
-#     )
-#
-#     # 启动输出读取任务
-#     await asyncio.gather(
-#         read_output(process.stdout, lambda output: logging.info(output)),
-#         read_output(process.stderr, lambda output: logging.error(output))
-#     )
-#
-#     return_code = await process.wait()
-#     if return_code == 0:
-#         with lock:
-#             process_status["message"] = "模型训练成功完成！"
-#             process_status["progress"] = 100
-#             process_status["error"] = None
-#             logging.info(process_status["message"])
-#     else:
-#         with lock:
-#             process_status["error"] = f"模型训练失败，退出码：{return_code}"
-#             process_status["message"] = "模型训练失败"
-#         logging.error(process_status["error"])
+    except AssertionError as e:
+        error_message = f"训练失败: {str(e)}"
+        update_status("训练失败", 0, "训练失败", error_message, 0, 0, 0)
+        logging.error(error_message)
+        raise  # 重新抛出异常以便于 pre_processing 捕获
+
+    except Exception as e:
+        # 捕获其他异常并记录错误信息
+        error_message = f"训练过程中发生错误: {str(e)}"
+        update_status("训练失败", 0, "训练失败", error_message, 0, 0, 0)
+        logging.error(error_message)
+        raise  # 重新抛出异常以便于 pre_processing 捕获
 
 
 async def inference_model(model_path: str, config_path: str, audio_name: str, speaker: str):
@@ -659,11 +663,12 @@ async def inference_model(model_path: str, config_path: str, audio_name: str, sp
 
 # 预处理
 async def pre_processing(output_dir: str, input_dir: str, work_dir: str, parameters: TrainingParameters):
-    command = f"/root/miniconda3/bin/python ./audio-slicer.py --output {output_dir} --input {input_dir} 10"
-    update_status("Running audio slicer...", 0, "Running audio slicer...", "", 0, 0)
-    logging.info("Running audio slicer...")
-
     try:
+        # Step 1: Audio Slicer
+        command = f"/root/miniconda3/bin/python ./audio-slicer.py --output {output_dir} --input {input_dir} 10"
+        update_status("Running audio slicer...", 0, "Running audio slicer...", "", 0, 0, 1)
+        logging.info("Running audio slicer...")
+
         process = await asyncio.create_subprocess_shell(
             command,
             stdout=asyncio.subprocess.PIPE,
@@ -672,10 +677,13 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
         )
 
         stdout, stderr = await process.communicate()
-        logging.info(f"Audio slicer output: {stdout.decode()}")
-        update_status("Audio slicer completed!", 0, "Audio slicer completed!", "", 0, 0)
+        if process.returncode != 0:
+            raise RuntimeError(f"Audio slicer failed: {stderr.decode()}")
 
-        # 创建 config.json
+        logging.info(f"Audio slicer output: {stdout.decode()}")
+        update_status("Audio slicer completed!", 0, "Audio slicer completed!", "", 0, 0, 1)
+
+        # Step 2: Create config.json and move files
         config_content = (
             '"n_speakers": 1\n\n'
             '"spk":{\n'
@@ -683,14 +691,10 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
             '}'
         )
         config_path = "/root/workdir/so-vits-svc/dataset_raw/config.json"
-
-        # 创建 config.json 文件并写入内容
         with open(config_path, "w") as config_file:
             config_file.write(config_content)
 
         logging.info(f"Created config.json at {config_path}")
-
-        # 创建 speaker 目录
         speaker_dir = "/root/workdir/so-vits-svc/dataset_raw/speaker"
         os.makedirs(speaker_dir, exist_ok=True)
 
@@ -698,138 +702,137 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
         output_dir = "/root/workdir/audio-slicer/output"
         output_files = os.listdir(output_dir)
         for file_name in output_files:
-            src_file = os.path.join(output_dir, file_name)
-            dst_file = os.path.join(speaker_dir, file_name)
-            shutil.move(src_file, dst_file)
+            shutil.move(os.path.join(output_dir, file_name), os.path.join(speaker_dir, file_name))
 
-        update_status("Files moved to speaker directory and config.json created!", 0,
-                      "Files moved to speaker directory and config.json created!", "", 0, 0)
+        update_status("Files moved to speaker directory and config.json created!", 0, "", "", 0, 0, 1)
         logging.info("Files moved to speaker directory and config.json created!")
 
-        # 执行重采样
+        # Step 3: Resample audio
         resample_command = "/root/miniconda3/bin/python resample.py --skip_loudnorm"
-        update_status("Resampling audio files to 44100Hz mono...", 0, "Resampling audio files to 44100Hz mono...", "",
-                      0, 0)
-        logging.info("Resampling audio files to 44100Hz mono...")
+        process = await asyncio.create_subprocess_shell(
+            resample_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd="/root/workdir/so-vits-svc"
+        )
 
-        try:
-            resample_process = await asyncio.create_subprocess_shell(
-                resample_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd="/root/workdir/so-vits-svc"
-            )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(f"Resampling failed: {stderr.decode()}")
 
-            stdout, stderr = await resample_process.communicate()
-            logging.info(f"Resampling output: {stdout.decode()}")
-            update_status("Resampling completed!", 0, "Resampling completed!", "", 0, 0)
-            logging.info("Resampling completed!")
-        except Exception as e:
-            update_status(f"Error running resampling: {str(e)}", 0, "Resampling failed", str(e), 0, 0)
-            logging.error(f"Error running resampling: {str(e)}")
+        logging.info(f"Resampling output: {stdout.decode()}")
+        update_status("Resampling completed!", 0, "", "", 0, 0, 1)
 
-        # 自动划分训练集和验证集，并生成配置文件
+        # Step 4: Preprocess dataset and generate config
         preprocess_command = "/root/miniconda3/bin/python preprocess_flist_config.py --speech_encoder vec768l12"
-        update_status("Splitting dataset and generating configuration...", 0,
-                      "Splitting dataset and generating configuration...", "", 0, 0)
-        logging.info("Splitting dataset and generating configuration...")
+        process = await asyncio.create_subprocess_shell(
+            preprocess_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd="/root/workdir/so-vits-svc"
+        )
 
-        try:
-            preprocess_process = await asyncio.create_subprocess_shell(
-                preprocess_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd="/root/workdir/so-vits-svc"
-            )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(f"Dataset preprocessing failed: {stderr.decode()}")
 
-            stdout, stderr = await preprocess_process.communicate()
-            logging.info(f"Preprocessing output: {stderr.decode()}")
-            update_status("Dataset splitting and configuration generation completed!", 0,
-                          "Dataset splitting and configuration generation completed!", "", 0, 0)
-            logging.info("Dataset splitting and configuration generation completed!")
-        except Exception as e:
-            update_status(f"Error running preprocessing: {str(e)}", 0, "Preprocessing failed", str(e), 0, 0)
-            logging.error(f"Error running preprocessing: {str(e)}")
+        logging.info(f"Preprocessing output: {stderr.decode()}")
+        update_status("Dataset preprocessing completed!", 0, "", "", 0, 0, 1)
 
-        # 更新配置文件
+        # Step 5: Update config file
         config_path = "/root/workdir/so-vits-svc/configs/config.json"
         update_config_file(parameters, config_path)
 
-        # 生成 Hubert 与 F0
+        # Step 6: Generate Hubert and F0
         hubert_f0_command = "/root/miniconda3/bin/python preprocess_hubert_f0.py --f0_predictor rmvpe --num_processes 8"
-        update_status("Generating Hubert and F0...", 0, "Generating Hubert and F0...", "", 0, 0)
-        logging.info("Generating Hubert and F0...")
+        process = await asyncio.create_subprocess_shell(
+            hubert_f0_command,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE,
+            cwd="/root/workdir/so-vits-svc"
+        )
 
-        try:
-            hubert_f0_process = await asyncio.create_subprocess_shell(
-                hubert_f0_command,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE,
-                cwd="/root/workdir/so-vits-svc"
-            )
+        stdout, stderr = await process.communicate()
+        if process.returncode != 0:
+            raise RuntimeError(f"Hubert and F0 generation failed: {stderr.decode()}")
 
-            stdout, stderr = await hubert_f0_process.communicate()
-            logging.info(f"Hubert and F0 generation output: {stderr.decode()}")
-            update_status("Hubert and F0 generation completed!", 0, "Hubert and F0 generation completed!", "", 0, 0)
-            logging.info("Hubert and F0 generation completed!")
-        except Exception as e:
-            update_status(f"Error generating Hubert and F0: {str(e)}", 0, "Hubert and F0 generation failed", str(e), 0,
-                          0)
-            logging.error(f"Error generating Hubert and F0: {str(e)}")
+        logging.info(f"Hubert and F0 generation output: {stderr.decode()}")
+        update_status("Hubert and F0 generation completed!", 0, "", "", 0, 0, 1)
 
-        # 在预处理完成后调用训练函数
-        config_path = "/root/workdir/so-vits-svc/configs/config.json"
+        # Step 7: Call train function
         await train_model(config_path, parameters)
 
-        # 调用推理函数，传入模型路径、配置路径、音频文件名和说话者
+        # Step 8: Inference with the trained model
         model_directory = "logs/44k/"
         model_files = get_pth_files(model_directory)
-
         audio_directory = "raw/"
         audio_files = os.listdir(audio_directory)
-
         speaker = "speaker"
 
         for model_file in model_files:
             model_path = os.path.join(model_directory, model_file)
-
-            for audio_path in audio_files:
-                await inference_model(model_path, config_path, audio_path, speaker)
-
-                try:
-                    os.remove(f'raw/{audio_path}')
-                    logging.info(f"Deleted audio file: raw/{audio_path}")
-                except Exception as e:
-                    logging.error(f"Error deleting audio file raw/{audio_path}: {str(e)}")
+            for audio_file in audio_files:
+                await inference_model(model_path, config_path, audio_file, speaker)
+                os.remove(os.path.join(audio_directory, audio_file))
+                logging.info(f"Deleted audio file: {audio_file}")
 
         logging.info("SUCCESS!!!")
+    except AssertionError as e:
+        error_message = f"AssertionError occurred in pre_processing: {str(e)}"
+        update_status("训练失败", 0, "训练失败", error_message, 0, 0, 0)
+        logging.error(error_message)
+        raise  # 重新抛出异常，确保外部能处理错误
     except Exception as e:
-        update_status(f"Error running audio slicer: {str(e)}", 0, "Audio slicing failed", str(e), 0, 0)
-        logging.error(f"Error running audio slicer: {str(e)}")
+        error_message = f"Error: {str(e)}"
+        update_status(error_message, 0, "Process failed", str(e), 0, 0, 0)
+        logging.error(error_message)
+        raise  # 重新抛出异常，确保外部能处理错误
 
 
 # 数据预处理
 async def data_pre_processing(train_files: List[str], val_files: List[str], train_download_dir: str,
                               val_download_dir: str, parameters: TrainingParameters):
-    total_files = len(train_files) + len(val_files)
+    try:
+        total_files = len(train_files) + len(val_files)
 
-    update_status("Downloading training files...", 0, "Started downloading training files", "", 0, 0)
-    logging.info("Started downloading training files")
+        update_status("Downloading training files...", 0, "Started downloading training files", "", 0, 0, 1)
+        logging.info("Started downloading training files")
 
-    for i, file_url in enumerate(train_files):
-        await download_file(file_url, train_download_dir)
+        # 下载训练文件
+        for i, file_url in enumerate(train_files):
+            try:
+                await download_file(file_url, train_download_dir)
+                update_status(f"Downloaded {i + 1}/{len(train_files)} training files", i / total_files * 100,
+                              "", "", 0, 0)
+            except Exception as e:
+                raise RuntimeError(f"Error downloading training file {file_url}: {str(e)}")
 
-    update_status("Downloading validation files...", 0, "Started downloading validation files", "", 0, 0)
-    logging.info("Started downloading validation files")
+        update_status("Downloading validation files...", 0, "Started downloading validation files", "", 0, 0, 1)
+        logging.info("Started downloading validation files")
 
-    for i, file_url in enumerate(val_files):
-        await download_file(file_url, val_download_dir)
+        # 下载验证文件
+        for i, file_url in enumerate(val_files):
+            try:
+                await download_file(file_url, val_download_dir)
+                update_status(f"Downloaded {i + 1}/{len(val_files)} validation files",
+                              (len(train_files) + i) / total_files * 100,
+                              "", "", 0, 0)
+            except Exception as e:
+                raise RuntimeError(f"Error downloading validation file {file_url}: {str(e)}")
 
-    update_status("Download complete! Starting audio slicing...", 0, "All files downloaded, proceeding to slicing", "",
-                  0, 0)
-    logging.info("All files downloaded, proceeding to slicing")
-    await pre_processing(output_dir="output", input_dir="input", work_dir="/root/workdir/audio-slicer",
-                         parameters=parameters)
+        update_status("Download complete! Starting audio slicing...", 0,
+                      "All files downloaded, proceeding to slicing", "", 0, 0, 1)
+        logging.info("All files downloaded, proceeding to slicing")
+
+        # 预处理步骤：音频切片和其他步骤
+        await pre_processing(output_dir="output", input_dir="input", work_dir="/root/workdir/audio-slicer",
+                             parameters=parameters)
+
+    except Exception as e:
+        error_message = f"Error during data pre-processing: {str(e)}"
+        update_status(error_message, 0, "Process failed", str(e), 0, 0, 0)
+        logging.error(error_message)
+        raise  # 重新抛出异常，以终止流程
 
 
 def get_pth_files(directory: str):
@@ -908,6 +911,10 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
     if request.parameters.vocoder_name not in ["nsf-hifigan", "nsf-snake-hifigan"]:
         return {"code": 400, "message": f"Invalid vocoder_name: {request.parameters.vocoder_name}"}
 
+    # 检查是否已有正在进行的训练任务
+    if is_training_in_progress():
+        return {"code": 200, "message": "当前存在未完成训练任务！！"}
+
     # 启动后台任务
     background_tasks.add_task(data_pre_processing, request.train_dataset, request.val_dataset, train_download_dir,
                               val_download_dir, request.parameters)
@@ -928,19 +935,21 @@ async def get_status():
         "message": "No message",
         "error": "",
         "total_epochs": 0,
-        "current_epoch": 0
+        "current_epoch": 0,
+        "is_training": 0
     }
 
     if status:
         # 解包状态记录，如果存在的话
-        current_task, progress, message, error, total_epochs, current_epoch = status[1:]
+        current_task, progress, message, error, total_epochs, current_epoch, is_training = status[1:]
         return {
             "current_task": current_task,
             "progress": progress,
             "message": message,
             "error": error,
             "total_epochs": total_epochs,
-            "current_epoch": current_epoch
+            "current_epoch": current_epoch,
+            "is_training": is_training
         }
     else:
         # 返回默认状态
@@ -950,8 +959,13 @@ async def get_status():
 # 开始训练
 @app.post("/start_training")
 async def start_training(parameters: TrainingParameters, background_tasks: BackgroundTasks):
+    # 检查是否已有正在进行的训练任务
+    if is_training_in_progress():
+        return {"code": 400, "message": "训练已经开始"}
+
     # 将训练任务添加到后台任务中
     background_tasks.add_task(train_model, "configs/config.json", parameters)
+
     return {"code": 200, "message": "训练已开始"}
 
 
