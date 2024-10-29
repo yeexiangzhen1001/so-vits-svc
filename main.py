@@ -865,7 +865,7 @@ async def data_pre_processing(train_files: List[str], val_files: List[str], trai
 def get_pth_files(directory: str):
     pth_files = []
     for file in os.listdir(directory):
-        if file.endswith('.pth') and file.startswith('G_'):
+        if file.endswith('.pth') and file.startswith('G_') and file != 'G_0.pth':
             pth_files.append(file)
     return pth_files
 
