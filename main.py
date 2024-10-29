@@ -106,7 +106,7 @@ init_db()
 
 # 插入或更新训练状态
 def update_status(current_task=None, progress=None, message=None, error=None, total_epochs=None, current_epoch=None,
-                  is_training=None, inference_completed=None):
+                  is_training=None, inference_completed=0):
     conn = sqlite3.connect('process_status.db')
     cursor = conn.cursor()
 
@@ -175,7 +175,7 @@ def update_current_epoch(epoch):
 def get_inference_parameters(filename):
     conn = sqlite3.connect('inference_results.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT model_name, clean_name, spk FROM inference_results WHERE generated_filename = ? ORDER BY id DESC LIMIT 1', (filename,))
+    cursor.execute('SELECT model_name, clean_name, spk FROM inference_results WHERE filename = ? ORDER BY id DESC LIMIT 1', (filename,))
     result = cursor.fetchone()
     conn.close()
     return result

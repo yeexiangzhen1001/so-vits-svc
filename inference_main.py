@@ -37,7 +37,7 @@ def record_inference_result(model_name, clean_name, spk, filename):
 
 
 # 在主函数开头初始化数据库
-init_db()
+init_inference_db()
 
 logging.getLogger('numba').setLevel(logging.WARNING)
 chunks_dict = infer_tool.read_temp("inference/chunks_temp.json")
