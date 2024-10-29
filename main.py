@@ -8,6 +8,7 @@ import shutil
 import asyncio
 import sqlite3
 import logging  # 导入 logging 模块
+import hashlib
 
 # 配置日志记录
 logging.basicConfig(
@@ -187,6 +188,15 @@ train_download_dir = "/root/workdir/audio-slicer/input"
 val_download_dir = "/root/workdir/so-vits-svc/raw"
 
 executor = ThreadPoolExecutor(max_workers=10)
+
+
+def calculate_md5(file_path):
+    """计算文件的MD5值"""
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 
 # 定义训练参数的模型
@@ -876,8 +886,12 @@ async def list_pth_files():
     directory = "logs/44k/"
     pth_files = get_pth_files(directory)
 
-    # 构建返回的模型列表
-    models = [{"filename": filename, "speaker": "speaker"} for filename in pth_files]
+    # 构建返回的模型列表，包含MD5值
+    models = []
+    for filename in pth_files:
+        file_path = os.path.join(directory, filename)
+        md5_value = calculate_md5(file_path)
+        models.append({"filename": filename, "speaker": "speaker", "md5": md5_value})
 
     return {"code": 200, "models": models}
 
