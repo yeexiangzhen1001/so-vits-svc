@@ -93,7 +93,8 @@ def init_db():
         error TEXT,
         total_epochs INTEGER,
         current_epoch INTEGER,
-        is_training INTEGER DEFAULT 0
+        is_training INTEGER DEFAULT 0,
+        inference_completed INTEGER DEFAULT 0  -- 新增字段，表示推理是否结束
     )
     ''')
     conn.commit()
@@ -105,7 +106,7 @@ init_db()
 
 # 插入或更新训练状态
 def update_status(current_task=None, progress=None, message=None, error=None, total_epochs=None, current_epoch=None,
-                  is_training=None):
+                  is_training=None, inference_completed=None):
     conn = sqlite3.connect('process_status.db')
     cursor = conn.cursor()
 
@@ -115,7 +116,7 @@ def update_status(current_task=None, progress=None, message=None, error=None, to
 
     # 如果数据库中没有状态记录，初始化一个默认值
     if not last_status:
-        last_status = (None, "", 0, "", "", 0, 0, 0)
+        last_status = (None, "", 0, "", "", 0, 0, 0, 0)
 
     # 更新新状态，保留未提供参数的字段的旧值
     new_status = (
@@ -126,12 +127,13 @@ def update_status(current_task=None, progress=None, message=None, error=None, to
         total_epochs if total_epochs is not None else last_status[5],
         current_epoch if current_epoch is not None else last_status[6],
         is_training if is_training is not None else last_status[7],  # 更新is_training字段
+        inference_completed if inference_completed is not None else last_status[8],
     )
 
     # 插入新状态
     cursor.execute('''
-    INSERT INTO process_status (current_task, progress, message, error, total_epochs, current_epoch, is_training)
-    VALUES (?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO process_status (current_task, progress, message, error, total_epochs, current_epoch, is_training, inference_completed)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     ''', new_status)
     conn.commit()
     conn.close()
@@ -787,6 +789,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
             for audio_file in audio_files:
                 os.remove(os.path.join(audio_directory, audio_file))
                 logging.info(f"Deleted audio file: {audio_file}")
+        update_status("SUCCESS!", 100, "训练任务成功结束！！", None, None, None, None, 1)
 
         logging.info("SUCCESS!!!")
     except AssertionError as e:
@@ -957,12 +960,13 @@ async def get_status():
         "current_epoch": 0,
         "is_training": 0,
         "code": 200,
-        "need_params": True
+        "need_params": True,
+        "inference_completed": 0
     }
 
     if status:
         # 解包状态记录，如果存在的话
-        current_task, progress, message, error, total_epochs, current_epoch, is_training = status[1:]
+        current_task, progress, message, error, total_epochs, current_epoch, is_training, inference_completed = status[1:]
         # 如果 error 不为空字符串，返回 code 400
         code = 400 if error and error.strip() else 200
         logging.info(f"Error value: '{error}'")  # 用单引号包围，以便清晰看到空字符串
@@ -975,7 +979,8 @@ async def get_status():
             "current_epoch": current_epoch,
             "is_training": is_training,
             "code": code,
-            "need_params": False
+            "need_params": False,
+            "inference_completed": inference_completed
         }
     else:
         # 返回默认状态
