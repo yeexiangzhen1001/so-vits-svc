@@ -1,5 +1,5 @@
 from fastapi import FastAPI, BackgroundTasks, Query
-from fastapi.responses import FileResponse, PlainTextResponse
+from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
 from typing import List
 import httpx
@@ -168,6 +168,16 @@ def update_current_epoch(epoch):
                    (epoch,))
     conn.commit()
     conn.close()
+
+
+def get_inference_parameters(filename):
+    conn = sqlite3.connect('inference_results.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT model_name, clean_name, spk FROM inference_results WHERE generated_filename = ? ORDER BY id DESC LIMIT 1', (filename,))
+    result = cursor.fetchone()
+    conn.close()
+    return result
+
 
 
 train_download_dir = "/root/workdir/audio-slicer/input"
@@ -869,7 +879,11 @@ async def list_pth_files():
     """API接口返回.pth文件列表"""
     directory = "logs/44k/"
     pth_files = get_pth_files(directory)
-    return {"code": 200, "files": pth_files}
+
+    # 构建返回的模型列表
+    models = [{"filename": filename, "speaker": "speaker"} for filename in pth_files]
+
+    return {"code": 200, "models": models}
 
 
 # 下载阶段模型
@@ -895,16 +909,19 @@ async def get_logs(limit: int = Query(10, ge=1)):
     log_file_path = "app.log"
 
     if not os.path.exists(log_file_path):
-        return {"error": "Log file not found."}
+        return JSONResponse(content={"code": 404, "message": ["Log file not found."]})
 
     try:
         with open(log_file_path, "r") as log_file:
             # 读取所有行
             lines = log_file.readlines()
             # 返回最后 limit 行
-            return PlainTextResponse(''.join(lines[-limit:]))
+            log_entries = lines[-limit:]
+
+            # 构建返回的 JSON 格式
+            return JSONResponse(content={"code": 200, "message": log_entries})
     except Exception as e:
-        return {"error": str(e)}
+        return JSONResponse(content={"code": 500, "message": [str(e)]})
 
 
 # 处理训练请求
@@ -984,7 +1001,20 @@ async def list_result_files():
     """API接口返回结果文件列表"""
     directory = "results/"  # 指定结果文件的目录
     result_files = get_all_files(directory)
-    return {"code": 200, "files": result_files}
+
+    results = []
+    for filename in result_files:
+        params = get_inference_parameters(filename)
+        if params:
+            model_name, clean_name, spk = params
+            results.append({
+                "filename": filename,
+                "model_name": model_name,
+                "speaker": spk,
+                "clean_name": clean_name
+            })
+
+    return {"code": 200, "results": results}
 
 
 # 下载结果文件
