@@ -946,8 +946,8 @@ async def get_status():
     if status:
         # 解包状态记录，如果存在的话
         current_task, progress, message, error, total_epochs, current_epoch, is_training = status[1:]
-        # 如果 error 不为空，返回 code 400
-        code = 400 if error is not None else 200
+        # 如果 error 不为空字符串，返回 code 400
+        code = 400 if error and error.strip() else 200
         return {
             "current_task": current_task,
             "progress": progress,
