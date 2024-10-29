@@ -621,32 +621,41 @@ async def read_output(stream, log_func):
 
 async def train_model(config_path: str, parameters: TrainingParameters):
     """训练主模型"""
-    command = f"/root/miniconda3/bin/python train.py -c {config_path} -m 44k"
-    logging.info("开始主模型训练...")
+    try:
+        # 检查 GPU 是否可用
+        assert torch.cuda.is_available(), "CPU training is not allowed."
 
-    update_status("开始主模型训练...", 0, "开始主模型训练...", None, 0, 0, 1)
+        # 获取超参数
+        hps = get_hparams(config_path="./configs/config.json", model_name="44k")
 
-    process = await asyncio.create_subprocess_shell(
-        command,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-        cwd="/root/workdir/so-vits-svc"
-    )
+        # 设置分布式训练的地址和端口
+        n_gpus = torch.cuda.device_count()
+        os.environ['MASTER_ADDR'] = 'localhost'
+        os.environ['MASTER_PORT'] = hps.train.port
 
-    # 启动输出读取任务
-    await asyncio.gather(
-        read_output(process.stdout, lambda output: logging.info(output)),
-        read_output(process.stderr, lambda output: logging.error(output))
-    )
+        update_status("开始主模型训练...", 0, "开始主模型训练...", None, 0, 0, 1)
+        logging.info("开始主模型训练...")
 
-    return_code = await process.wait()
-    if return_code == 0:
-        update_status("模型训练成功完成！", 100, "模型训练成功完成！", None, parameters.epochs, parameters.epochs, 0)
-        logging.info("模型训练成功完成！")
-    else:
-        error_message = f"模型训练失败，退出码：{return_code}"
-        update_status("模型训练失败", 0, "模型训练失败", error_message, 0, 0, 0)
+        # 使用异步事件循环运行多进程训练
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(executor, lambda: mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps)))
+
+        # 训练成功后更新状态
+        update_status("训练完成!", 100, "训练完成!", None, parameters.epochs, parameters.epochs, 0)
+        logging.info("训练完成!")
+
+    except AssertionError as e:
+        error_message = f"训练失败: {str(e)}"
+        update_status("训练失败", 0, "训练失败", error_message, 0, 0, 0)
         logging.error(error_message)
+        raise  # 重新抛出异常以便于 pre_processing 捕获
+
+    except Exception as e:
+        # 捕获其他异常并记录错误信息
+        error_message = f"训练过程中发生错误: {str(e)}"
+        update_status("训练失败", 0, "训练失败", error_message, 0, 0, 0)
+        logging.error(error_message)
+        raise  # 重新抛出异常以便于 pre_processing 捕获
 
 
 async def inference_model(model_path: str, config_path: str, audio_name: str, speaker: str):
