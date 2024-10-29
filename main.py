@@ -175,11 +175,12 @@ def update_current_epoch(epoch):
 def get_inference_parameters(filename):
     conn = sqlite3.connect('inference_results.db')
     cursor = conn.cursor()
-    cursor.execute('SELECT model_name, clean_name, spk FROM inference_results WHERE filename = ? ORDER BY id DESC LIMIT 1', (filename,))
+    cursor.execute(
+        'SELECT model_name, clean_name, spk FROM inference_results WHERE filename = ? ORDER BY id DESC LIMIT 1',
+        (filename,))
     result = cursor.fetchone()
     conn.close()
     return result
-
 
 
 train_download_dir = "/root/workdir/audio-slicer/input"
@@ -591,7 +592,8 @@ def update_config_file(parameters: TrainingParameters, config_path: str):
         with open(config_path, 'w') as f:
             json.dump(config, f, indent=2)
 
-        update_status("Configuration file updated successfully.", 0, "Configuration file updated successfully.", None, 0,
+        update_status("Configuration file updated successfully.", 0, "Configuration file updated successfully.", None,
+                      0,
                       0)
         logging.info("Configuration file updated successfully.")
     except Exception as e:
@@ -609,41 +611,32 @@ async def read_output(stream, log_func):
 
 async def train_model(config_path: str, parameters: TrainingParameters):
     """训练主模型"""
-    try:
-        # 检查 GPU 是否可用
-        assert torch.cuda.is_available(), "CPU training is not allowed."
+    command = f"python train.py -c {config_path} -m 44k"
+    logging.info("开始主模型训练...")
 
-        # 获取超参数
-        hps = get_hparams(config_path="./configs/config.json", model_name="44k")
+    update_status("开始主模型训练...", 0, "开始主模型训练...", None, 0, 0, 1)
 
-        # 设置分布式训练的地址和端口
-        n_gpus = torch.cuda.device_count()
-        os.environ['MASTER_ADDR'] = 'localhost'
-        os.environ['MASTER_PORT'] = hps.train.port
+    process = await asyncio.create_subprocess_shell(
+        command,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+        cwd="/root/workdir/so-vits-svc"
+    )
 
-        update_status("开始主模型训练...", 0, "开始主模型训练...", None, 0, 0, 1)
-        logging.info("开始主模型训练...")
+    # 启动输出读取任务
+    await asyncio.gather(
+        read_output(process.stdout, lambda output: logging.info(output)),
+        read_output(process.stderr, lambda output: logging.error(output))
+    )
 
-        # 使用异步事件循环运行多进程训练
-        loop = asyncio.get_event_loop()
-        await loop.run_in_executor(executor, lambda: mp.spawn(run, nprocs=n_gpus, args=(n_gpus, hps)))
-
-        # 训练成功后更新状态
-        update_status("训练完成!", 100, "训练完成!", None, parameters.epochs, parameters.epochs, 0)
-        logging.info("训练完成!")
-
-    except AssertionError as e:
-        error_message = f"训练失败: {str(e)}"
-        update_status("训练失败", 0, "训练失败", error_message, 0, 0, 0)
+    return_code = await process.wait()
+    if return_code == 0:
+        update_status("模型训练成功完成！", 100, "模型训练成功完成！", None, parameters.epochs, parameters.epochs, 0)
+        logging.info("模型训练成功完成！")
+    else:
+        error_message = f"模型训练失败，退出码：{return_code}"
+        update_status("模型训练失败", 0, "模型训练失败", error_message, 0, 0, 0)
         logging.error(error_message)
-        raise  # 重新抛出异常以便于 pre_processing 捕获
-
-    except Exception as e:
-        # 捕获其他异常并记录错误信息
-        error_message = f"训练过程中发生错误: {str(e)}"
-        update_status("训练失败", 0, "训练失败", error_message, 0, 0, 0)
-        logging.error(error_message)
-        raise  # 重新抛出异常以便于 pre_processing 捕获
 
 
 async def inference_model(model_path: str, config_path: str, audio_name: str, speaker: str):
@@ -966,10 +959,10 @@ async def get_status():
 
     if status:
         # 解包状态记录，如果存在的话
-        current_task, progress, message, error, total_epochs, current_epoch, is_training, inference_completed = status[1:]
+        current_task, progress, message, error, total_epochs, current_epoch, is_training, inference_completed = status[
+                                                                                                                1:]
         # 如果 error 不为空字符串，返回 code 400
         code = 400 if error and error.strip() else 200
-        logging.info(f"Error value: '{error}'")  # 用单引号包围，以便清晰看到空字符串
         return {
             "current_task": current_task,
             "progress": progress,
