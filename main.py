@@ -611,7 +611,7 @@ async def read_output(stream, log_func):
 
 async def train_model(config_path: str, parameters: TrainingParameters):
     """训练主模型"""
-    command = f"python train.py -c {config_path} -m 44k"
+    command = f"/root/miniconda3/bin/python train.py -c {config_path} -m 44k"
     logging.info("开始主模型训练...")
 
     update_status("开始主模型训练...", 0, "开始主模型训练...", None, 0, 0, 1)
