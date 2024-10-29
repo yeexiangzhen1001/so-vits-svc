@@ -862,14 +862,6 @@ async def data_pre_processing(train_files: List[str], val_files: List[str], trai
         raise  # 重新抛出异常，以终止流程
 
 
-def get_pth_files(directory: str):
-    pth_files = []
-    for file in os.listdir(directory):
-        if file.endswith('.pth') and file.startswith('G_') and file != 'G_0.pth':
-            pth_files.append(file)
-    return pth_files
-
-
 def get_all_files(directory: str):
     return [file for file in os.listdir(directory) if os.path.isfile(os.path.join(directory, file))]
 
@@ -878,7 +870,7 @@ def get_pth_files(directory: str):
     """获取指定目录下以 G_ 开头的所有 .pth 文件"""
     pth_files = []
     for file in os.listdir(directory):
-        if file.endswith('.pth') and file.startswith('G_'):
+        if file.endswith('.pth') and file.startswith('G_') and file != 'G_0.pth':
             pth_files.append(file)
     return pth_files
 
