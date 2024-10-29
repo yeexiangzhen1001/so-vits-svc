@@ -928,7 +928,7 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
 async def get_status():
     # 获取最新状态
     status = get_latest_status()
-    print("Latest status:", status)  # 调试信息
+    logging.info("Latest status:", status)  # 调试信息
 
     # 设置默认状态
     default_status = {
@@ -948,6 +948,7 @@ async def get_status():
         current_task, progress, message, error, total_epochs, current_epoch, is_training = status[1:]
         # 如果 error 不为空字符串，返回 code 400
         code = 400 if error and error.strip() else 200
+        logging.info(f"Error value: '{error}'")  # 用单引号包围，以便清晰看到空字符串
         return {
             "current_task": current_task,
             "progress": progress,
