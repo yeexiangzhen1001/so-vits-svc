@@ -989,8 +989,7 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
 async def get_status():
     # 获取最新状态
     status = get_latest_status()
-    logging.info("Latest status:", status)  # 调试信息
-
+    
     # 设置默认状态
     default_status = {
         "current_task": "No task running",
