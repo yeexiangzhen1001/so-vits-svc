@@ -1054,7 +1054,7 @@ async def list_result_files():
             model_name, model_md5, clean_name, spk = params
 
             # Fetch the corresponding validation file URL
-            val_url = get_val_file_url(filename)  # Implement this function to get the URL based on filename
+            val_url = get_val_file_url(clean_name)  # Implement this function to get the URL based on clean_name
 
             results.append({
                 "filename": filename,
