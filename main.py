@@ -102,6 +102,21 @@ def init_db():
     conn.close()
 
 
+def init_val_files_db():
+    conn = sqlite3.connect('val_files.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS validation_files (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        filename TEXT,
+        url TEXT
+    )
+    ''')
+    conn.commit()
+    conn.close()
+
+
+init_val_files_db()
 init_db()
 
 
@@ -177,11 +192,20 @@ def get_inference_parameters(filename):
     conn = sqlite3.connect('inference_results.db')
     cursor = conn.cursor()
     cursor.execute(
-        'SELECT model_name, clean_name, spk FROM inference_results WHERE filename = ? ORDER BY id DESC LIMIT 1',
+        'SELECT model_name, model_md5, clean_name, spk FROM inference_results WHERE filename = ? ORDER BY id DESC LIMIT 1',
         (filename,))
     result = cursor.fetchone()
     conn.close()
     return result
+
+
+def get_val_file_url(filename):
+    conn = sqlite3.connect('val_files.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT url FROM validation_files WHERE filename = ?', (filename,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else None
 
 
 train_download_dir = "/root/workdir/audio-slicer/input"
@@ -841,6 +865,14 @@ async def data_pre_processing(train_files: List[str], val_files: List[str], trai
         for i, file_url in enumerate(val_files):
             try:
                 await download_file(file_url, val_download_dir)
+                # Insert into validation_files table
+                conn = sqlite3.connect('val_files.db')
+                cursor = conn.cursor()
+                cursor.execute('INSERT INTO validation_files (filename, url) VALUES (?, ?)',
+                               (os.path.basename(file_url), file_url))
+                conn.commit()
+                conn.close()
+
                 update_status(f"Downloaded {i + 1}/{len(val_files)} validation files",
                               (len(train_files) + i) / total_files * 100,
                               "", None, 0, 0)
@@ -1019,12 +1051,18 @@ async def list_result_files():
     for filename in result_files:
         params = get_inference_parameters(filename)
         if params:
-            model_name, clean_name, spk = params
+            model_name, model_md5, clean_name, spk = params
+
+            # Fetch the corresponding validation file URL
+            val_url = get_val_file_url(filename)  # Implement this function to get the URL based on filename
+
             results.append({
                 "filename": filename,
                 "model_name": model_name,
+                "model_md5": model_md5,
                 "speaker": spk,
-                "clean_name": clean_name
+                "clean_name": clean_name,
+                "file_url": val_url  # 添加验证文件的URL
             })
 
     return {"code": 200, "results": results}

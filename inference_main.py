@@ -6,32 +6,29 @@ from inference import infer_tool
 from inference.infer_tool import Svc
 from spkmix import spk_mix_map
 import sqlite3
+import hashlib
 
 
 def init_inference_db():
     conn = sqlite3.connect('inference_results.db')
     cursor = conn.cursor()
-    cursor.execute('''
-    CREATE TABLE IF NOT EXISTS inference_results (
+    cursor.execute('''CREATE TABLE IF NOT EXISTS inference_results (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         model_name TEXT,
+        model_md5 TEXT,
         clean_name TEXT,
         spk TEXT,
         filename TEXT
-    )
-    ''')
+    )''')
     conn.commit()
     conn.close()
 
 
-
-def record_inference_result(model_name, clean_name, spk, filename):
+def record_inference_result(model_name, model_md5, clean_name, spk, filename):
     conn = sqlite3.connect('inference_results.db')
     cursor = conn.cursor()
-    cursor.execute('''
-    INSERT INTO inference_results (model_name, clean_name, spk, filename)
-    VALUES (?, ?, ?, ?)
-    ''', (model_name, clean_name, spk, filename))
+    cursor.execute('''INSERT INTO inference_results (model_name, model_md5, clean_name, spk, filename)
+                      VALUES (?, ?, ?, ?, ?)''', (model_name, model_md5, clean_name, spk, filename))
     conn.commit()
     conn.close()
 
@@ -41,6 +38,13 @@ init_inference_db()
 
 logging.getLogger('numba').setLevel(logging.WARNING)
 chunks_dict = infer_tool.read_temp("inference/chunks_temp.json")
+
+def calculate_md5(file_path):
+    hash_md5 = hashlib.md5()
+    with open(file_path, "rb") as f:
+        for chunk in iter(lambda: f.read(4096), b""):
+            hash_md5.update(chunk)
+    return hash_md5.hexdigest()
 
 
 def main():
@@ -200,8 +204,11 @@ def main():
             res_path = f'results/{clean_name}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}'
             soundfile.write(res_path, audio, svc_model.target_sample, format=wav_format)
 
+            # 计算模型文件的 MD5 值
+            model_md5 = calculate_md5(args.model_path)
+
             # 记录推理结果
-            record_inference_result(f'{model_name}.pth', clean_name, spk, f'{clean_name}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}')
+            record_inference_result(f'{model_name}.pth', model_md5, clean_name, spk, f'{clean_name}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}')
 
             svc_model.clear_empty()
 
