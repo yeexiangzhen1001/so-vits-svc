@@ -1,6 +1,7 @@
-from fastapi import FastAPI, BackgroundTasks, Query
+from fastapi import FastAPI, BackgroundTasks, Query, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
+import urllib.parse
 from typing import List
 import httpx
 import uvicorn
@@ -1069,10 +1070,21 @@ async def list_result_files():
 
 
 # 下载结果文件
-@app.get("/download_result/{file_name}")
+@app.get("/download_result/{file_name:path}")
 async def download_result(file_name: str):
-    directory = "results/"  # 指定结果文件的目录
-    file_path = os.path.join(directory, file_name)
+    directory = "results/"
+
+    # 对传入的文件名进行 URL 编码
+    encoded_file_name = urllib.parse.quote(file_name)
+
+    file_path = os.path.join(directory, encoded_file_name)
+
+    # 打印调试信息
+    logging.info(f"Looking for file at: {file_path}")
+
+    if not os.path.isfile(file_path):
+        raise HTTPException(status_code=404, detail="File not found")
+
     return FileResponse(file_path)
 
 
