@@ -591,7 +591,7 @@ def evaluate(hps, generator, eval_loader, writer_eval):
 # 下载文件的异步函数
 async def download_file(url: str, directory: str):
     filename = os.path.join(directory, url.split("/")[-1])
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=60.0)) as client:  # 设置超时时间为 60 秒
+    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=60.0, write=60.0, pool=60.0)) as client:  # 设置超时时间为 60 秒
         update_status(f"Downloading {filename}...", 0, f"Downloading {filename}...", None, 0, 0)
         logging.info(f"Downloading {filename}...")
         try:
