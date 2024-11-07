@@ -207,7 +207,7 @@ def main():
             soundfile.write(res_path, audio, svc_model.target_sample, format=wav_format)
 
             # 记录推理结果
-            record_inference_result(f'{model_name}.pth', model_md5, clean_name, spk, f'{clean_name}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}')
+            record_inference_result(f'{model_name}.pth', model_md5, clean_name, spk, f'{model_md5}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}')
 
             svc_model.clear_empty()
 
