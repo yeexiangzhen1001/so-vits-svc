@@ -201,11 +201,10 @@ def main():
                 isdiffusion = "diff"
             if use_spk_mix:
                 spk = "spk_mix"
-            res_path = f'results/{clean_name}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}'
-            soundfile.write(res_path, audio, svc_model.target_sample, format=wav_format)
-
             # 计算模型文件的 MD5 值
             model_md5 = calculate_md5(args.model_path)
+            res_path = f'results/{model_md5}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}'
+            soundfile.write(res_path, audio, svc_model.target_sample, format=wav_format)
 
             # 记录推理结果
             record_inference_result(f'{model_name}.pth', model_md5, clean_name, spk, f'{clean_name}_{key}_{spk}{cluster_name}_{isdiffusion}_{f0p}_{model_name}.{wav_format}')
