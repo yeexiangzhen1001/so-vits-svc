@@ -1,8 +1,10 @@
+from datetime import datetime
+
 from fastapi import FastAPI, BackgroundTasks, Query, HTTPException
 from fastapi.responses import FileResponse, PlainTextResponse, JSONResponse
 from pydantic import BaseModel, Field
 import urllib.parse
-from typing import List
+from typing import List, Optional, Dict
 import httpx
 import uvicorn
 import shutil
@@ -117,8 +119,47 @@ def init_val_files_db():
     conn.close()
 
 
-init_val_files_db()
-init_db()
+def init_event_table():
+    # 连接到现有的 event.db 数据库
+    conn = sqlite3.connect('event.db')
+    cursor = conn.cursor()
+
+    # 增加 event_id 字段
+    cursor.execute('''
+    CREATE TABLE IF NOT EXISTS events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_id INTEGER UNIQUE,  -- 添加 event_id 字段并设置唯一约束
+        event_name TEXT UNIQUE,
+        start_time INTEGER,
+        end_time INTEGER,
+        status TEXT
+    )
+    ''')
+
+    # 事件名称列表与对应的 event_id，从1000开始
+    event_data = [
+        ("Waiting for Parameters", 1000),
+        ("Resource Pulling", 1001),
+        ("Data Preprocessing", 1002),
+        ("Training Started", 1003),
+        ("Inference on Validation Set", 1004),
+    ]
+
+    # 初始化事件数据，避免重复插入
+    for event_name, event_id in event_data:
+        try:
+            print(f"Attempting to insert event: {event_name} with event_id: {event_id}")
+            cursor.execute('''
+            INSERT OR IGNORE INTO events (event_id, event_name, start_time, end_time, status)
+            VALUES (?, ?, NULL, NULL, 'not_started')
+            ''', (event_id, event_name))
+        except sqlite3.IntegrityError as e:
+            print(f"IntegrityError: Could not insert event {event_name}. Error: {e}")
+        except Exception as e:
+            print(f"Error: An unexpected error occurred while inserting {event_name}. Error: {e}")
+
+    conn.commit()
+    conn.close()
 
 
 # 插入或更新训练状态
@@ -207,6 +248,85 @@ def get_val_file_url(filename):
     result = cursor.fetchone()
     conn.close()
     return result[0] if result else None
+
+
+# 获取当前时间的时间戳
+def get_current_timestamp():
+    return int(datetime.utcnow().timestamp())
+
+
+def update_event_time(event_id: int, start_time: Optional[int] = None, end_time: Optional[int] = None):
+    """
+    根据事件 ID 更新事件的开始时间和结束时间
+
+    :param event_id: 事件 ID
+    :param start_time: 开始时间，时间戳
+    :param end_time: 结束时间，时间戳
+    """
+    # 连接到 SQLite 数据库
+    conn = sqlite3.connect('event.db')
+    cursor = conn.cursor()
+
+    try:
+        # 查询事件是否存在，使用 event_id 查询
+        cursor.execute('SELECT * FROM events WHERE event_id = ?', (event_id,))
+        event = cursor.fetchone()
+
+        if event:
+            # 如果有开始时间，更新事件的开始时间
+            if start_time is not None:
+                cursor.execute('UPDATE events SET start_time = ?, status = ? WHERE event_id = ?',
+                               (start_time, 'in_progress' if not end_time else event[4], event_id))
+
+            # 如果有结束时间，更新事件的结束时间
+            if end_time is not None:
+                cursor.execute('UPDATE events SET end_time = ?, status = ? WHERE event_id = ?',
+                               (end_time, 'completed', event_id))
+
+            # 提交更新
+            conn.commit()
+            logging.info(f"Event with ID '{event_id}' updated successfully.")
+
+            return True
+        else:
+            logging.error(f"Event with ID '{event_id}' not found.")
+            return False
+    except Exception as e:
+        logging.error(f"Error updating event with ID '{event_id}': {e}")
+        conn.rollback()  # Rollback the transaction in case of error
+        return False
+    finally:
+        # 确保在最后关闭连接
+        conn.close()
+
+
+def get_events() -> List[Dict[str, Optional[int]]]:
+    # 连接到 SQLite 数据库
+    conn = sqlite3.connect('event.db')
+    cursor = conn.cursor()
+
+    # 查询所有事件记录，包括 event_id
+    cursor.execute("SELECT event_id, event_name, start_time, end_time FROM events")
+    events = cursor.fetchall()
+
+    # 如果没有事件记录，返回空列表
+    if not events:
+        conn.close()
+        return []
+
+    # 格式化事件列表，包含 event_id
+    event_list = []
+    for event in events:
+        event_dict = {
+            "event_id": event[0],  # 新增 event_id 字段
+            "event_name": event[1],
+            "start_time": event[2] if event[2] is not None else None,
+            "end_time": event[3] if event[3] is not None else None
+        }
+        event_list.append(event_dict)
+
+    conn.close()
+    return event_list
 
 
 train_download_dir = "/root/workdir/audio-slicer/input"
@@ -591,7 +711,8 @@ def evaluate(hps, generator, eval_loader, writer_eval):
 # 下载文件的异步函数
 async def download_file(url: str, directory: str):
     filename = os.path.join(directory, url.split("/")[-1])
-    async with httpx.AsyncClient(timeout=httpx.Timeout(connect=60.0, read=60.0, write=60.0, pool=60.0)) as client:  # 设置超时时间为 60 秒
+    async with httpx.AsyncClient(
+            timeout=httpx.Timeout(connect=60.0, read=60.0, write=60.0, pool=60.0)) as client:  # 设置超时时间为 60 秒
         update_status(f"Downloading {filename}...", 0, f"Downloading {filename}...", None, 0, 0)
         logging.info(f"Downloading {filename}...")
         try:
@@ -647,6 +768,11 @@ async def read_output(stream, log_func):
 async def train_model(config_path: str, parameters: TrainingParameters):
     """训练主模型"""
     try:
+        # 更新事件表中的“开始训练”事件的开始时间
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+        update_event_time(event_id=1003, start_time=current_timestamp, end_time=current_timestamp)
+
         # 检查 GPU 是否可用
         assert torch.cuda.is_available(), "CPU training is not allowed."
 
@@ -667,6 +793,11 @@ async def train_model(config_path: str, parameters: TrainingParameters):
 
         # 训练成功后更新状态
         update_status("训练完成!", 100, "训练完成!", None, parameters.epochs, parameters.epochs, 0)
+        # 更新事件表中的“开始训练”事件的结束时间
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+        update_event_time(event_id=1003, start_time=None, end_time=current_timestamp)
+
         logging.info("训练完成!")
 
     except AssertionError as e:
@@ -713,6 +844,10 @@ async def inference_model(model_path: str, config_path: str, audio_name: str, sp
 # 预处理
 async def pre_processing(output_dir: str, input_dir: str, work_dir: str, parameters: TrainingParameters):
     try:
+        # 更新事件表中的“数据预处理”事件的开始时间
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+        update_event_time(event_id=1002, start_time=current_timestamp, end_time=None)
         # Step 1: Audio Slicer
         command = f"/root/miniconda3/bin/python ./audio-slicer.py --output {output_dir} --input {input_dir} 10"
         update_status("Running audio slicer...", 0, "Running audio slicer...", None, 0, 0, 1)
@@ -808,10 +943,19 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
         logging.info(f"Hubert and F0 generation output: {stderr.decode()}")
         update_status("Hubert and F0 generation completed!", 0, "", None, 0, 0, 1)
 
+        # 更新事件表中的“数据预处理”事件的结束时间
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+        update_event_time(event_id=1002, start_time=None, end_time=current_timestamp)
+
         # Step 7: Call train function
         await train_model(config_path, parameters)
 
         # Step 8: Inference with the trained model
+        # 更新事件表中的“推理训练集”事件的开始时间
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+        update_event_time(event_id=1004, start_time=current_timestamp, end_time=None)
         model_directory = "logs/44k/"
         model_files = get_pth_files(model_directory)
         audio_directory = "raw/"
@@ -827,6 +971,10 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
             os.remove(os.path.join(audio_directory, audio_file))
             logging.info(f"Deleted audio file: {audio_file}")
         update_status("SUCCESS!", 100, "训练任务成功结束！！", None, None, None, None, 1)
+        # 更新事件表中的“推理训练集”事件的结束时间
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+        update_event_time(event_id=1004, start_time=None, end_time=current_timestamp)
 
         logging.info("SUCCESS!!!")
     except AssertionError as e:
@@ -847,9 +995,14 @@ async def data_pre_processing(train_files: List[str], val_files: List[str], trai
     try:
         total_files = len(train_files) + len(val_files)
 
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+
         update_status("Downloading training files...", 0, "Started downloading training files", None, 0, 0, 1)
         logging.info("Started downloading training files")
 
+        # 更新事件表中的“拉取资源”事件的开始时间
+        update_event_time(event_id=1001, start_time=current_timestamp, end_time=None)
         # 下载训练文件
         for i, file_url in enumerate(train_files):
             try:
@@ -883,6 +1036,11 @@ async def data_pre_processing(train_files: List[str], val_files: List[str], trai
         update_status("Download complete! Starting audio slicing...", 0,
                       "All files downloaded, proceeding to slicing", None, 0, 0, 1)
         logging.info("All files downloaded, proceeding to slicing")
+
+        # 更新事件表中的“拉取资源”事件的结束时间
+        # 获取当前时间戳
+        current_timestamp = get_current_timestamp()
+        update_event_time(event_id=1001, start_time=None, end_time=current_timestamp)
 
         # 预处理步骤：音频切片和其他步骤
         await pre_processing(output_dir="output", input_dir="input", work_dir="/root/workdir/audio-slicer",
@@ -978,10 +1136,17 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
     if is_training_in_progress():
         return {"code": 200, "message": "当前存在未完成训练任务！！"}
 
+    # 获取当前时间戳
+    current_timestamp = get_current_timestamp()
+
     # 启动后台任务
     background_tasks.add_task(data_pre_processing, request.train_dataset, request.val_dataset, train_download_dir,
                               val_download_dir, request.parameters)
     logging.info("Training started")  # 添加调试日志
+
+    # 更新事件表中的“等待参数下发”事件的开始时间
+    update_event_time(event_id=1000, start_time=current_timestamp, end_time=current_timestamp)
+
     return {"code": 200, "message": "Training started, files are being downloaded and processed."}
 
 
@@ -989,6 +1154,12 @@ async def start_training(request: TrainRequest, background_tasks: BackgroundTask
 async def get_status():
     # 获取最新状态
     status = get_latest_status()
+
+    # 获取事件列表，包含 event_id
+    events = get_events()
+
+    # 记录事件列表的数量
+    logging.info(f"Retrieved {len(events)} events from the events table.")
 
     # 设置默认状态
     default_status = {
@@ -1001,7 +1172,8 @@ async def get_status():
         "is_training": 0,
         "code": 200,
         "need_params": True,
-        "inference_completed": 0
+        "inference_completed": 0,
+        "events": events  # 返回事件列表
     }
 
     if status:
@@ -1020,10 +1192,11 @@ async def get_status():
             "is_training": is_training,
             "code": code,
             "need_params": False,
-            "inference_completed": inference_completed
+            "inference_completed": inference_completed,
+            "events": events  # 返回事件列表
         }
     else:
-        # 返回默认状态
+        # 返回默认状态和事件列表
         return default_status
 
 
@@ -1087,5 +1260,58 @@ async def download_result(file_name: str):
     return FileResponse(file_path)
 
 
+async def get_gpu_info() -> Dict[str, str]:
+    try:
+        # 使用 asyncio 创建异步子进程执行修正后的 nvidia-smi 命令，增加 fan.speed 查询风扇转速
+        process = await asyncio.create_subprocess_shell(
+            "nvidia-smi --query-gpu=name,memory.used,memory.total,temperature.gpu,power.draw,power.limit,utilization.gpu,fan.speed --format=csv,noheader,nounits",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        # 获取命令的标准输出和错误输出
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            # 解析标准输出
+            result = stdout.decode().strip().split('\n')
+            gpu_info = []
+
+            for line in result:
+                data = line.split(', ')
+                gpu_info.append({
+                    "name": data[0],  # GPU 名称
+                    "memory_used": float(data[1]),  # 已使用内存 (数值)
+                    "memory_total": float(data[2]),  # 总内存 (数值)
+                    "temperature": float(data[3]),  # GPU 温度 (数值)
+                    "power_draw": float(data[4]),  # 功率消耗 (数值)
+                    "power_limit": float(data[5]),  # 功率限制 (数值)
+                    "gpu_util": float(data[6]),  # GPU 利用率 (数值)
+                    "fan_speed": float(data[7])  # 风扇转速 (数值)
+                })
+
+            return {"gpu_info": gpu_info}
+        else:
+            error_message = stderr.decode().strip()
+            logging.error(f"Error executing nvidia-smi: {error_message}")  # Log error
+            return {"error": f"Failed to get GPU information. Error: {error_message}"}
+
+    except Exception as e:
+        logging.error(f"Exception: {e}")  # Log exception details
+        return {"error": str(e)}
+
+
+@app.get("/gpu_info")
+async def gpu_info():
+    gpu_info_data = await get_gpu_info()
+    if "error" in gpu_info_data:
+        return {"code": 500, "message": gpu_info_data["error"]}
+    return {"code": 200, "data": gpu_info_data["gpu_info"], "message": "success"}
+
 if __name__ == "__main__":
+    # 初始化事件表
+    init_event_table()
+    init_val_files_db()
+    init_db()
+
     uvicorn.run("main:app", host="0.0.0.0", port=8000)
