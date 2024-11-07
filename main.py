@@ -1158,9 +1158,6 @@ async def get_status():
     # 获取事件列表，包含 event_id
     events = get_events()
 
-    # 记录事件列表的数量
-    logging.info(f"Retrieved {len(events)} events from the events table.")
-
     # 设置默认状态
     default_status = {
         "current_task": "No task running",
