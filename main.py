@@ -771,7 +771,7 @@ async def train_model(config_path: str, parameters: TrainingParameters):
         # 更新事件表中的“开始训练”事件的开始时间
         # 获取当前时间戳
         current_timestamp = get_current_timestamp()
-        update_event_time(event_id=1003, start_time=current_timestamp, end_time=current_timestamp)
+        update_event_time(event_id=1003, start_time=current_timestamp, end_time=None)
 
         # 检查 GPU 是否可用
         assert torch.cuda.is_available(), "CPU training is not allowed."
