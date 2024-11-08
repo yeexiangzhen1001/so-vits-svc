@@ -15,7 +15,7 @@ import hashlib
 
 # 配置日志记录
 logging.basicConfig(
-    level=logging.DEBUG,
+    level=logging.INFO,
     format='%(asctime)s - %(levelname)s - %(message)s',
     filename='app.log',  # 指定日志文件名
     filemode='a'  # 以追加模式打开文件
@@ -514,7 +514,6 @@ def run(rank, n_gpus, hps):
         scheduler_d.step()
 
         # 更新总轮数
-        logging.info(f'总进度{epoch / hps.train.epochs * 100} %...')
         update_status("Training started...", epoch / hps.train.epochs * 100, "Training in progress", None,
                       hps.train.epochs,
                       epoch, None)
@@ -785,7 +784,6 @@ async def train_model(config_path: str, parameters: TrainingParameters):
         os.environ['MASTER_PORT'] = hps.train.port
 
         update_status("开始主模型训练...", 0, "开始主模型训练...", None, 0, 0, 1)
-        logging.info("开始主模型训练...")
 
         # 使用异步事件循环运行多进程训练
         loop = asyncio.get_event_loop()
@@ -797,8 +795,6 @@ async def train_model(config_path: str, parameters: TrainingParameters):
         # 获取当前时间戳
         current_timestamp = get_current_timestamp()
         update_event_time(event_id=1003, start_time=None, end_time=current_timestamp)
-
-        logging.info("训练完成!")
 
     except AssertionError as e:
         error_message = f"训练失败: {str(e)}"
@@ -892,7 +888,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
         logging.info("Files moved to speaker directory and config.json created!")
 
         # Step 3: Resample audio
-        resample_command = "/root/miniconda3/bin/python resample.py --skip_loudnorm"
+        resample_command = "/root/miniconda3/bin/python resample.py"
         process = await asyncio.create_subprocess_shell(
             resample_command,
             stdout=asyncio.subprocess.PIPE,
