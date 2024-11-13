@@ -120,15 +120,15 @@ def init_val_files_db():
 
 
 def init_event_table():
-    # 连接到现有的 event.db 数据库
+    # Connect to the existing event.db database
     conn = sqlite3.connect('event.db')
     cursor = conn.cursor()
 
-    # 增加 event_id 字段
+    # Create the events table if it doesn't already exist
     cursor.execute('''
     CREATE TABLE IF NOT EXISTS events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
-        event_id INTEGER UNIQUE,  -- 添加 event_id 字段并设置唯一约束
+        event_id INTEGER UNIQUE,  -- Add event_id field with unique constraint
         event_name TEXT UNIQUE,
         start_time INTEGER,
         end_time INTEGER,
@@ -136,7 +136,7 @@ def init_event_table():
     )
     ''')
 
-    # 事件名称列表与对应的 event_id，从1000开始
+    # Event names and corresponding event_id values, starting from 1000
     event_data = [
         ("Waiting for Parameters", 1000),
         ("Resource Pulling", 1001),
@@ -145,14 +145,16 @@ def init_event_table():
         ("Inference on Validation Set", 1004),
     ]
 
-    # 初始化事件数据，避免重复插入
+    # Initialize event data, avoiding duplicate insertions
     for event_name, event_id in event_data:
+        # Set start_time only for event_id 1000
+        start_time = int(time.time()) if event_id == 1000 else None
         try:
             print(f"Attempting to insert event: {event_name} with event_id: {event_id}")
             cursor.execute('''
             INSERT OR IGNORE INTO events (event_id, event_name, start_time, end_time, status)
-            VALUES (?, ?, NULL, NULL, 'not_started')
-            ''', (event_id, event_name))
+            VALUES (?, ?, ?, NULL, 'not_started')
+            ''', (event_id, event_name, start_time))
         except sqlite3.IntegrityError as e:
             print(f"IntegrityError: Could not insert event {event_name}. Error: {e}")
         except Exception as e:
@@ -889,6 +891,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
 
         # Step 3: Resample audio
         resample_command = "/root/miniconda3/bin/python resample.py"
+        logging.info(f"resample_command: {resample_command}")
         process = await asyncio.create_subprocess_shell(
             resample_command,
             stdout=asyncio.subprocess.PIPE,
@@ -905,6 +908,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
 
         # Step 4: Preprocess dataset and generate config
         preprocess_command = "/root/miniconda3/bin/python preprocess_flist_config.py --speech_encoder vec768l12"
+        logging.info(f"preprocess_command: {preprocess_command}")
         process = await asyncio.create_subprocess_shell(
             preprocess_command,
             stdout=asyncio.subprocess.PIPE,
@@ -925,6 +929,7 @@ async def pre_processing(output_dir: str, input_dir: str, work_dir: str, paramet
 
         # Step 6: Generate Hubert and F0
         hubert_f0_command = "/root/miniconda3/bin/python preprocess_hubert_f0.py --f0_predictor rmvpe --num_processes 8"
+        logging.info(f"hubert_f0_command: {hubert_f0_command}")
         process = await asyncio.create_subprocess_shell(
             hubert_f0_command,
             stdout=asyncio.subprocess.PIPE,
